@@ -29,6 +29,13 @@ jobs:
           scons --version | head -3
           nproc
 
+      - name: Prepare test cache dir
+        run: |
+          # test_main() does DirAccess::make_dir_absolute("$HOME/.cache/godot_test"),
+          # which only creates the last path component; a bare runner has no ~/.cache.
+          mkdir -p "$HOME/.cache/godot_test"
+          ls -ld "$HOME/.cache" "$HOME/.cache/godot_test"
+
       - name: Build ASAN with UNFIXED source
         run: |
           git checkout "$(git rev-parse HEAD~2)" -- scene/resources/audio/audio_stream_wav.cpp
