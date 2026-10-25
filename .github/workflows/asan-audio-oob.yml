@@ -1,0 +1,68 @@
+name: ASAN OOB evidence
+on:
+  push:
+    branches: [ fix/audio-stream-wav-loop-end-oob ]
+  workflow_dispatch:
+
+jobs:
+  asan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      ASAN_OPTIONS: "color=always:print_suppressions=1:suppressions=${{ github.workspace }}/misc/error_suppressions/asan.txt:alloc_dealloc_mismatch=0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+
+      - name: Show history
+        run: |
+          git log --oneline -3
+          echo "unfixed source commit: $(git rev-parse HEAD~2)"
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential scons pkg-config libx11-dev libxcursor-dev \
+            libxinerama-dev libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev \
+            libudev-dev libxi-dev libxrandr-dev libwayland-dev
+          scons --version | head -3
+          nproc
+
+      - name: Build ASAN with UNFIXED source
+        run: |
+          git checkout "$(git rev-parse HEAD~2)" -- scene/resources/audio/audio_stream_wav.cpp
+          echo "--- end_limit in the source being built ---"
+          grep -n "end_limit = " scene/resources/audio/audio_stream_wav.cpp
+          scons platform=linuxbsd target=editor dev_build=yes use_asan=yes tests=yes -j"$(nproc)"
+          ls -l bin/
+
+      - name: Run regression test on unfixed code (expect ASAN report)
+        continue-on-error: true
+        run: |
+          BIN=$(ls bin/godot.linuxbsd.editor.dev*.san | head -n1)
+          echo "BIN=$BIN"
+          set +e
+          "$BIN" --headless --test --test-case="*Forward loop does not read past loop_end*" --force-colors 2>&1 | tee unfixed.log
+          echo "exit=${PIPESTATUS[0]}" >> unfixed.log
+          echo "asan_reports=$(grep -c 'AddressSanitizer' unfixed.log || true)" >> unfixed.log
+
+      - name: Re-apply the fix and rebuild
+        run: |
+          git checkout HEAD -- scene/resources/audio/audio_stream_wav.cpp
+          echo "--- end_limit after restoring the fix ---"
+          grep -n "end_limit = " scene/resources/audio/audio_stream_wav.cpp
+          scons platform=linuxbsd target=editor dev_build=yes use_asan=yes tests=yes -j"$(nproc)"
+
+      - name: Run regression test on fixed code (expect PASS)
+        run: |
+          BIN=$(ls bin/godot.linuxbsd.editor.dev*.san | head -n1)
+          "$BIN" --headless --test --test-case="*Forward loop does not read past loop_end*" --force-colors 2>&1 | tee fixed.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asan-logs
+          path: |
+            unfixed.log
+            fixed.log
