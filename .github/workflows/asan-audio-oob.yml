@@ -17,8 +17,7 @@ jobs:
 
       - name: Show history
         run: |
-          git log --oneline -3
-          echo "unfixed source commit: $(git rev-parse HEAD~2)"
+          git log --oneline -6
 
       - name: Install deps
         run: |
@@ -38,9 +37,19 @@ jobs:
 
       - name: Build ASAN with UNFIXED source
         run: |
-          git checkout "$(git rev-parse HEAD~2)" -- scene/resources/audio/audio_stream_wav.cpp
+          # Pick the fix commit by subject instead of "HEAD~N": extra CI-only commits on
+          # this branch must not silently shift which source gets built.
+          FIX_COMMIT=$(git log --format='%H %s' | grep -m1 'Fix out-of-bounds read when looping an AudioStreamWAV' | cut -d' ' -f1)
+          UNFIXED="$FIX_COMMIT^"
+          echo "fix commit:     $FIX_COMMIT"
+          echo "unfixed commit: $UNFIXED ($(git log -1 --format=%s "$UNFIXED"))"
+          git checkout "$UNFIXED" -- scene/resources/audio/audio_stream_wav.cpp
           echo "--- end_limit in the source being built ---"
           grep -n "end_limit = " scene/resources/audio/audio_stream_wav.cpp
+          if grep -q "MAX(loop_end - 1, 0)" scene/resources/audio/audio_stream_wav.cpp; then
+            echo "::error::source still contains the fix; refusing to build a 'unfixed' binary"
+            exit 1
+          fi
           scons platform=linuxbsd target=editor dev_build=yes use_asan=yes tests=yes -j"$(nproc)"
           ls -l bin/
 
@@ -59,6 +68,8 @@ jobs:
           git checkout HEAD -- scene/resources/audio/audio_stream_wav.cpp
           echo "--- end_limit after restoring the fix ---"
           grep -n "end_limit = " scene/resources/audio/audio_stream_wav.cpp
+          grep -q "MAX(loop_end - 1, 0)" scene/resources/audio/audio_stream_wav.cpp || {
+            echo "::error::the fix is missing after restore"; exit 1; }
           scons platform=linuxbsd target=editor dev_build=yes use_asan=yes tests=yes -j"$(nproc)"
 
       - name: Run regression test on fixed code (expect PASS)
