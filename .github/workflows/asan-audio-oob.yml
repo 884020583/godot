@@ -13,7 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          # Needs to reach the fix commit (a few CI-only commits may sit on top of it).
+          fetch-depth: 30
 
       - name: Show history
         run: |
@@ -40,6 +41,11 @@ jobs:
           # Pick the fix commit by subject instead of "HEAD~N": extra CI-only commits on
           # this branch must not silently shift which source gets built.
           FIX_COMMIT=$(git log --format='%H %s' | grep -m1 'Fix out-of-bounds read when looping an AudioStreamWAV' | cut -d' ' -f1)
+          if [ -z "$FIX_COMMIT" ]; then
+            echo "::error::could not find the fix commit in the fetched history (fetch-depth too small?)"
+            git log --oneline -20
+            exit 1
+          fi
           UNFIXED="$FIX_COMMIT^"
           echo "fix commit:     $FIX_COMMIT"
           echo "unfixed commit: $UNFIXED ($(git log -1 --format=%s "$UNFIXED"))"
